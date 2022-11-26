@@ -275,6 +275,8 @@ def organize_metadata_by_var(all_original_metadata, variable_inclusion):
 
                         cleaned_dict[colname].append(instance[colname])    
 
+    return key_metadata_types
+
 ## -- DETECT INCONSISTENCIES BETWEEN FILES IN SPECIFIC VARIABLES; STAGE FOR EXCLUSION -- ##
 
 def find_inconsistent_variables(key_metadata_types):
@@ -371,7 +373,7 @@ def find_inconsistent_variables(key_metadata_types):
 
     print("WARNING - the following variables with inconsistent metadata are included in the dataframe: " + str(included_inconsistent_variables) + ".  Be sure to over-write metadata entries for each of these variables at the end of the script if needed." )
 
-    return inconsistent_variables
+    return inconsistent_variables, inconsistent_column_labels
 
 ## -- CONSTRUCT CSV FOR ACTIVE, CONSISTENT VARIABLES -- ##
 
@@ -379,6 +381,7 @@ def construct_csv(extracted_metadata, inconsistent_variables, variable_inclusion
 
     active_files = extracted_metadata[1]
     all_variable_instances = variable_inclusion[3]
+    inconsistent_variables = inconsistent_variables[0]
 
     #Exctract CSV Data from SAV files
 
@@ -441,3 +444,129 @@ def construct_csv(extracted_metadata, inconsistent_variables, variable_inclusion
 
     return full_dataframe
 
+## -- CREATE MERGED SPSS FILE -- ##
+
+def create_spss_file(full_dataframe, key_metadata_types, inconsistent_variables):
+
+    inconsistent_column_labels = inconsistent_variables[1]
+    column_names_to_labels_cleaned = key_metadata_types[0][1]
+
+    #Create placeholders for final metadata
+
+    final_col_labels = []
+    final_col_labels_key = []
+    final_var_val_labels = {}
+    final_var_widths = {}
+    final_var_measures = {}
+
+    #Fill variables with metadata entries based on columns in final dataframe
+
+    for var in full_dataframe.columns: 
+
+        try:
+            
+            final_col_labels.append(key_metadata_types['column_names_to_labels'][0][var][0]) #Looks in the cleaned metadata dictionary by type, then by variable, then by position within the corresponding values for that variable (first instance by default).  Appends this value to the final_column_label list for each active variable.
+
+            final_col_labels_key.append(var)
+
+            #Not every variable name has a corresponding dictionary entry for the metadata types below.  For this reason, these steps are nested in a "try"/"except" sequence.
+
+            try:
+                
+                final_var_val_labels[var] = key_metadata_types['variable_value_labels'][0][var][0]
+
+                final_var_measures[var] = key_metadata_types['variable_measure'][0][var][0]
+
+                final_var_widths[var] = key_metadata_types['variable_display_width'][0][var][0]
+
+            except:
+
+                pass
+        
+        except:
+
+            pass
+
+    # -- TEST FOR KEY/LABEL MATCHING -- #
+
+    zipped_labels = zip(final_col_labels_key, final_col_labels)
+
+    #Tests if proper label is associated with the proper variable
+
+    for (var, label) in zipped_labels:
+
+        try:
+
+            if label != column_names_to_labels_cleaned[var][0] and var not in inconsistent_column_labels:
+
+                print("ADVISORY: There is a potential mismatch between the column label and associated key.  This can also be caused by including variables with inconsistent metadata.  Double check before using this dataset.  This advisory was flagged at the following variable: " + var)
+
+                print(column_names_to_labels_cleaned[var][0])
+
+        except: 
+
+            print(var + " was assigned '" + label + "' as a column label manually.  Not present in original dataset.")
+
+    counter = 0
+
+    #Tests if labels are ordered properly (must be identical or order of the variables in the dataframe)
+
+    for (var, label) in zipped_labels:
+
+        if var != full_dataframe.columns[counter]:
+
+            print("WARNING: There is a mismatch between the dataframe's column order and the order of columns in the final zipped column key-label pairs.  Double check for extraneous or misplaced columns. This error was flagged at the following variable: " + var)
+
+        counter += 1
+
+    full_dataframe = full_dataframe.reindex(columns=final_col_labels_key)
+
+    print("FULL DATAFRAME: " + str(full_dataframe.shape))
+
+    #WRITE FINAL CSV
+
+    full_dataframe.to_csv('FinalDataFrame.csv') #CSV must be written locally and read back in (final_csv variable) to be written into SPSS file; not 100% sure why this is the case but it's been necessary for the pyreadstat command to work properly and yield a DisplayR compatible file
+
+    #Produce SPSS file
+
+    path = 'FinalSPSSFile.sav'
+
+    final_csv = pd.read_csv('FinalCSVDataFrameCopy.csv')
+
+    try:
+
+        final_csv.drop('Unnamed: 0', axis=1, inplace=True)
+        final_csv.drop('Unnamed: 1', axis=1, inplace=True)
+
+    except: 
+
+        pass
+
+    print("Final dataframe shape: " + str(final_csv.shape))
+    print("Number of column labels: " + str(len(final_col_labels)))
+
+    final_spss_file = pyreadstat.write_sav(final_csv, path, column_labels=final_col_labels, variable_value_labels=final_var_val_labels, variable_measure=final_var_measures, variable_display_width=final_var_widths)
+
+    return final_spss_file
+
+## -- POST MERGED SPSS FILE TO BOX -- ##
+
+def post_to_box(box_client):
+
+    folder_id = 'FOLDER_ID_HERE'
+    sav_file_id = 'SPSS_FILE_ID_HERE'
+    csv_file_id = 'CSV_FILE_ID_HERE'
+
+    existing_files = box_client.folder(folder_id = folder_id).get_items()
+
+    file_names = []
+
+    updated_sav_file = box_client.file(sav_file_id).update_contents('FinalSPSSFile.sav')
+    print(f'{updated_sav_file.name} has been updated with a new version.')
+
+    updated_csv_file = box_client.file(csv_file_id).update_contents('FinalCSVDataFrameCopy.csv')
+    print(f'{updated_csv_file.name} has been updated with a new version.')
+
+    shutil.rmtree('temp')
+    os.remove('team_comments.xlsx')
+    os.remove('comments.xlsx')
