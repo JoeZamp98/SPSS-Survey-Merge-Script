@@ -178,7 +178,7 @@ def extract_metadata(all_original_spss_files):
 
     all_original_metadata = {all_metadata_types[i]: all_metadata_dicts[i] for i in range(len(all_metadata_dicts))}
 
-    return all_original_metadata
+    return all_original_metadata, active_files
 
 ## -- BASED ON EXPLICIT OVERRIDES & BASELINE CRITERIA, DETERMINE VARIABLE INCLUSION -- ##
 
@@ -227,4 +227,217 @@ def determine_variable_inclusion(all_original_metadata, explicit_overrides):
 
     always_remove = [var for var in filtered_comments_exclude if var not in always_remove]
 
+    return all_unique_variables, always_retain, always_remove, all_variable_instances
+
+## -- ORGANIZE METADATA OF VARIOUS TYPES INTO A DICTIONARY KEYED BY VARIABLE -- ##
+
+def organize_metadata_by_var(all_original_metadata, variable_inclusion):
+
+    all_unique_variables = variable_inclusion[0]
+
+    #GROUP METADATA INTO DICTIONARIES KEYED BY COLUMN NAME
+
+    column_names_to_labels_cleaned = {}
+    variable_value_labels_cleaned = {}
+    missing_ranges_cleaned = {}
+    variable_display_width_cleaned = {}
+    variable_measure_cleaned = {}
+
+    inconsistent_column_names_to_labels = {}
+    inconsistent_variable_value_labels = {}
+    inconsistent_missing_ranges = {}
+    inconsistent_variable_display_width = {}
+    inconsistent_variable_measures = {}
+
+    key_metadata_types = {'column_names_to_labels': [column_names_to_labels_cleaned, inconsistent_column_names_to_labels],
+    'variable_value_labels': [variable_value_labels_cleaned, inconsistent_variable_value_labels],
+    'missing_ranges': [missing_ranges_cleaned, inconsistent_missing_ranges],'variable_display_width': [variable_display_width_cleaned, inconsistent_variable_display_width], 'variable_measure': [variable_measure_cleaned, inconsistent_variable_measures]}
+
+    for type in key_metadata_types: #Cycles through metadata type
+
+        full_file_set = all_original_metadata[type]
+
+        for file in full_file_set: #Cycles through files
+
+            instance = full_file_set[file]
+
+            for colname in instance: #Cycles through individual variable (column) names within each file
+
+                if colname in all_unique_variables: #If the variable (column) name appears in active unique variables, the corresponding metadata is appended to a cleaned dictionary
+
+                    cleaned_dict = key_metadata_types[type][0]
+
+                    if colname not in cleaned_dict: 
+
+                        cleaned_dict[colname] = [instance[colname]]
+                    
+                    elif colname in cleaned_dict:
+
+                        cleaned_dict[colname].append(instance[colname])    
+
+## -- DETECT INCONSISTENCIES BETWEEN FILES IN SPECIFIC VARIABLES; STAGE FOR EXCLUSION -- ##
+
+def find_inconsistent_variables(key_metadata_types):
+
+    #FIND ACTIVE VARIABLES WITH INCONSISTENT METADATA
+
+    inconsistent_variables = []
+
+    #Code in function below (doesn't run by default) detects variables with a change in any type of metadata (col labels, var-val labels, var measures, var widths)
+
+    def detect_all_inconsistencies(key_metadata_types):
+
+        for type in key_metadata_types:
+
+            cleaned_metadata_dict = key_metadata_types[type][0]
+
+            for variable in cleaned_metadata_dict:
+
+                variable_instances = cleaned_metadata_dict[variable]
+
+                if len(variable_instances) > 0:
+
+                    comparison_result = all(ele == variable_instances[0] for ele in variable_instances)
+
+                    if comparison_result == False:
+
+                        inconsistent_variables.append(variable)
+
+        return inconsistent_variables
+
+    #Detects column label inconsistencies only; runs by default for awareness, but doesn't actually exclude variables by default
+    
+    def detect_col_label_inconsistencies(key_metadata_types):
+
+        inconsistent_column_labels = []
+
+        for type in key_metadata_types:
+
+            cleaned_metadata_dict = key_metadata_types['column_names_to_labels'][0]
+
+            for variable in cleaned_metadata_dict:
+
+                variable_instances = cleaned_metadata_dict[variable]
+
+                variable_instances = set(variable_instances)
+
+                if len(variable_instances) > 1:
+
+                    inconsistent_column_labels.append(variable)
+
+        return inconsistent_column_labels
+
+    inconsistent_column_labels = detect_col_label_inconsistencies(key_metadata_types)
+
+    #Code in function below (runs by default) detects inconsistencies in var-val-labels ONLY, which is the most consequential type of metadata inconsistency
+
+    def detect_critical_inconsistencies(key_metadata_types):
+
+        var_val_dict = key_metadata_types['variable_value_labels'][0]
+
+        for variable in var_val_dict:
+
+            val_instances = var_val_dict[variable]
+
+            if len(val_instances) > 0:
+
+                comparison_result = all(ele == val_instances[0] for ele in val_instances)
+
+                if comparison_result == False:
+
+                    inconsistent_variables.append(variable)
+
+        return inconsistent_variables
+
+    inconsistent_variables = detect_critical_inconsistencies(key_metadata_types)
+
+    #Find inconsistent variables that will indeed be included (those that are force-included)
+
+    inconsistent_variables = set(inconsistent_variables)
+
+    print("Variables with inconsistent metadata: " + str(len(inconsistent_variables)))
+
+    for i in inconsistent_variables:
+
+        print(i)
+
+    included_inconsistent_variables = []
+
+    for var in always_retain:
+
+        if var in inconsistent_variables:
+
+            included_inconsistent_variables.append(var)
+
+    print("WARNING - the following variables with inconsistent metadata are included in the dataframe: " + str(included_inconsistent_variables) + ".  Be sure to over-write metadata entries for each of these variables at the end of the script if needed." )
+
+    return inconsistent_variables
+
+## -- CONSTRUCT CSV FOR ACTIVE, CONSISTENT VARIABLES -- ##
+
+def construct_csv(extracted_metadata, inconsistent_variables, variable_inclusion):
+
+    active_files = extracted_metadata[1]
+    all_variable_instances = variable_inclusion[3]
+
+    #Exctract CSV Data from SAV files
+
+    all_extracted_csv_files = []
+
+    for file in active_files:
+
+        df, meta = pyreadstat.read_sav('temp/' + str(file))
+
+        all_extracted_csv_files.append(df)
+
+    #Drop columns from data frame based on a variety of criteria
+
+    for file in all_extracted_csv_files:
+
+        for col in file.columns:
+
+            if col in inconsistent_variables and col not in always_retain: #inconsistent metadata
+
+                file.drop(col, axis=1, inplace=True)
+
+            if all_variable_instances[col] == 1: #column only appears in one file (lower threshold to 0 if needed)
+
+                try:
+
+                    file.drop(col, axis=1, inplace=True)
+
+                except:
+
+                    pass
+
+            if col in always_remove:
+                
+                try:
+
+                    file.drop(col, axis=1, inplace=True)
+
+                except:
+
+                    pass
+
+    #Append 'wave' column to enable filtering/display over time
+
+    wave_counter = 0
+
+    for file in all_extracted_csv_files:
+
+        file['wave'] = active_files[wave_counter]
+
+        wave_counter += 1
+        
+    #Concatenate trimmed dataframes into one
+
+    full_dataframe = pd.concat(all_extracted_csv_files, keys = active_files)
+
+    #Move supplementary/calculated columns and columns with inconsistent metadata that were force-included to the end of the dataframe
+
+    wave_column = full_dataframe.pop('wave')
+    full_dataframe.insert(len(full_dataframe.columns), 'wave', wave_column)
+
+    return full_dataframe
 
