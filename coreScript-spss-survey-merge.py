@@ -179,12 +179,12 @@ def extract_metadata(all_original_spss_files):
 
 ## -- BASED ON EXPLICIT OVERRIDES & BASELINE CRITERIA, DETERMINE VARIABLE INCLUSION -- ##
 
-def determine_variable_inclusion(all_original_metadata, explicit_overrides):
+def determine_variable_inclusion(extracted_metadata, explicit_overrides):
 
     all_unique_variables = []
-    all_column_names_dict = all_original_metadata[0]
+    all_column_names_dict = extracted_metadata[0]
 
-    for survey in all_original_metadata['column_names']:
+    for survey in extracted_metadata['column_names']:
 
         for colname in all_column_names_dict[survey]:
 
@@ -228,9 +228,10 @@ def determine_variable_inclusion(all_original_metadata, explicit_overrides):
 
 ## -- ORGANIZE METADATA OF VARIOUS TYPES INTO A DICTIONARY KEYED BY VARIABLE -- ##
 
-def organize_metadata_by_var(all_original_metadata, variable_inclusion):
+def organize_metadata_by_var(extracted_metadata, variable_inclusion):
 
     all_unique_variables = variable_inclusion[0]
+    all_original_metadata = extracted_metadata[0]
 
     #GROUP METADATA INTO DICTIONARIES KEYED BY COLUMN NAME
 
@@ -374,11 +375,11 @@ def find_inconsistent_variables(key_metadata_types):
 
 ## -- CONSTRUCT CSV FOR ACTIVE, CONSISTENT VARIABLES -- ##
 
-def construct_csv(extracted_metadata, inconsistent_variables, variable_inclusion):
+def construct_csv(extracted_metadata, inconsistencies, variable_inclusion):
 
     active_files = extracted_metadata[1]
     all_variable_instances = variable_inclusion[3]
-    inconsistent_variables = inconsistent_variables[0]
+    inconsistent_variables = inconsistencies[0]
 
     #Exctract CSV Data from SAV files
 
@@ -443,9 +444,9 @@ def construct_csv(extracted_metadata, inconsistent_variables, variable_inclusion
 
 ## -- CREATE MERGED SPSS FILE -- ##
 
-def create_spss_file(full_dataframe, key_metadata_types, inconsistent_variables):
+def create_spss_file(full_dataframe, key_metadata_types, inconsistencies):
 
-    inconsistent_column_labels = inconsistent_variables[1]
+    inconsistent_column_labels = inconsistencies[1]
     column_names_to_labels_cleaned = key_metadata_types[0][1]
 
     #Create placeholders for final metadata
@@ -567,3 +568,20 @@ def post_to_box(box_client):
     shutil.rmtree('temp')
     os.remove('team_comments.xlsx')
     os.remove('comments.xlsx')
+
+## -- FUNCTION CALLS -- ##
+
+box_client = establish_box_connection()
+download_spss_files(box_client)
+all_original_spss_files = determine_import_list()
+explicit_overrides = download_explicit_overrides(box_client)
+mongo_client = connect_to_mongo()
+
+extracted_metadata = extract_metadata(all_original_spss_files)
+variable_inclusion = determine_variable_inclusion(extracted_metadata, explicit_overrides)
+key_metadata_types = organize_metadata_by_var(extracted_metadata, variable_inclusion)
+inconsistencies = find_inconsistent_variables(key_metadata_types)
+
+full_dataframe = construct_csv(extracted_metadata, inconsistencies, variable_inclusion)
+final_spss_file = create_spss_file(full_dataframe, key_metadata_types, inconsistencies)
+post_to_box(box_client)
