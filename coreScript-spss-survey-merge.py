@@ -26,11 +26,8 @@ retain_specific_files = []
 always_retain = [] #Add variables manually if need be
 always_remove = [] #Add variables manually if need be
 
-
-
 #Print important information
 print("Current working directory: " + str(os.getcwd()))
-
 
 ### -- ESTABLISH CONNECTION TO BOX -- ###
 
